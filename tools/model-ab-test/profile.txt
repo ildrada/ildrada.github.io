@@ -1,0 +1,18 @@
+# Candidate profile injected into every case that contains {{profile}}.
+# Lines starting with # are dropped. Replace the text below with your own CV
+# when you write cases for your own postings. The sample cases (fit scores,
+# cover letter) are written against this fictional profile.
+
+Alex Morgan - Data Analyst, 5 years of experience
+Location: Dublin, Ireland. Open to hybrid roles in Dublin or fully remote roles anywhere in the EU. Not willing to relocate outside the EU and has no US work authorization.
+Languages: English (native), French (professional working proficiency).
+Skills: SQL (PostgreSQL, BigQuery, SQL Server), Python (pandas, basic scikit-learn), dbt, Looker, Power BI, Tableau, Airflow basics, Git.
+
+Experience
+- 2021 to now: Data Analyst, FreshCart (online grocery). Built the KPI warehouse in BigQuery with dbt, built the Looker dashboards used by 60 people across operations and finance, and built a churn model that reduced monthly churn by 8%.
+- 2019 to 2021: Junior Analyst, Clearwater Insurance. Monthly reporting in SQL Server and Power BI, produced the board reporting pack.
+
+Education: BSc Statistics, University College Dublin, 2019.
+
+Looking for: Senior Data Analyst or Analytics Engineer roles, EUR 60,000 to 75,000, at most 3 days per week on site.
+Not interested in: pure software engineering, sales, marketing, or management roles without hands-on data work.
