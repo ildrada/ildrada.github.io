@@ -164,17 +164,28 @@ def stream_chat(base_url, payload, timeout):
         chunks_content = 0
 
     completion_tokens = (usage or {}).get("completion_tokens") or (chunks_content + chunks_reasoning)
+    prompt_tokens = (usage or {}).get("prompt_tokens")
+    prompt_source = "usage"
+    if not prompt_tokens:
+        # The server did not report usage: estimate from the prompt text (about 4 chars per token).
+        chars = sum(len(str(m.get("content", ""))) for m in payload.get("messages", []))
+        prompt_tokens = int(round(chars / 4))
+        prompt_source = "estimate"
+    ttft = (t_first - t0) if t_first else None
     gen_time = (t_last - t_first) if (t_first and t_last and t_last > t_first) else None
     return {
         "text": text.strip(),
         "reasoning": reason_text,
         "finish_reason": finish,
-        "prompt_tokens": (usage or {}).get("prompt_tokens"),
+        "prompt_tokens": prompt_tokens,
+        "prompt_tokens_source": prompt_source,
         "completion_tokens": completion_tokens,
         "reasoning_tokens_est": chunks_reasoning,
         "answer_tokens_est": chunks_content,
-        "ttft_s": (t_first - t0) if t_first else None,
-        "gen_tps": (completion_tokens / gen_time) if gen_time else None,
+        "ttft_s": ttft,
+        # read = prompt processing speed, write = generation speed
+        "read_tps": (prompt_tokens / ttft) if (ttft and ttft > 0) else None,
+        "write_tps": (completion_tokens / gen_time) if gen_time else None,
         "total_s": t_end - t0,
         "usage_exact": usage is not None,
     }
@@ -471,9 +482,9 @@ def run_option(name, opt, cases, profile, base_url, repeats, timeout, warmup, ru
                     out = stream_chat(base_url, payload, timeout)
                 except Exception as exc:
                     out = {"text": "", "reasoning": "", "error": str(exc), "total_s": None,
-                           "ttft_s": None, "gen_tps": None, "completion_tokens": 0,
-                           "reasoning_tokens_est": 0, "answer_tokens_est": 0,
-                           "prompt_tokens": None, "finish_reason": "error", "usage_exact": False}
+                           "ttft_s": None, "read_tps": None, "write_tps": None, "completion_tokens": 0,
+                           "reasoning_tokens_est": 0, "answer_tokens_est": 0, "prompt_tokens": None,
+                           "prompt_tokens_source": "none", "finish_reason": "error", "usage_exact": False}
                 score, details, json_ok = score_case(case, out["text"])
                 rec = {"option": name, "label": opt.get("label", name), "model": model,
                        "case": case["id"], "type": case.get("type"), "repeat": rep,
@@ -485,10 +496,19 @@ def run_option(name, opt, cases, profile, base_url, repeats, timeout, warmup, ru
                 if out.get("error"):
                     print(f" ERROR {out['error']}")
                     continue
-                tps = f"{out['gen_tps']:.1f} tok/s" if out.get("gen_tps") else "n/a"
-                print(f" score {score:5.1f}  {fmt_s(out.get('total_s'))}  {tps}  "
-                      f"out {out.get('completion_tokens')} tok (thinking ~{out.get('reasoning_tokens_est')})"
+                read = f"read {out['read_tps']:.0f} tok/s" if out.get("read_tps") else "read n/a"
+                write = f"write {out['write_tps']:.1f} tok/s" if out.get("write_tps") else "write n/a"
+                print(f" score {score:5.1f}  {fmt_s(out.get('total_s'))}  {read}  {write}  "
+                      f"in {out.get('prompt_tokens')} tok  out {out.get('completion_tokens')} tok "
+                      f"(thinking ~{out.get('reasoning_tokens_est')})"
                       + ("  CUT OFF by max_tokens" if out.get("finish_reason") == "length" else ""))
+
+    done = [r for r in results if not r.get("error")]
+    if done:
+        print(f"[{name}] done: quality {fmt(mean([r['score'] for r in done]))}/100   "
+              f"read {fmt(mean([r.get('read_tps') for r in done]), 0)} tok/s   "
+              f"write {fmt(mean([r.get('write_tps') for r in done]), 1)} tok/s   "
+              f"time per case {fmt_s(mean([r.get('total_s') for r in done]))}")
     return results
 
 
@@ -524,6 +544,12 @@ def build_report(run_dir):
             return "n/a"
         return f"{sum(1 for r in rel if r['json_ok'])}/{len(rel)}"
 
+    def prompt_tokens(rs):
+        value = fmt(mean([r.get("prompt_tokens") for r in rs]), 0)
+        if any(r.get("prompt_tokens_source") == "estimate" for r in rs):
+            value += " (estimated)"
+        return value
+
     lines = ["# Model A/B test report", "",
              f"Generated {dt.datetime.now().strftime('%Y-%m-%d %H:%M')} from `{run_dir}`", "",
              "## Summary", ""]
@@ -537,10 +563,11 @@ def build_report(run_dir):
         ("Replies cut off by max_tokens", lambda rs: str(sum(1 for r in rs if r.get("finish_reason") == "length"))),
         ("Errors", lambda rs: str(sum(1 for r in rs if r.get("error")))),
         ("Time to first token, mean", lambda rs: fmt_s(mean([r.get("ttft_s") for r in rs]))),
-        ("Generation speed, mean tok/s", lambda rs: fmt(mean([r.get("gen_tps") for r in rs]))),
+        ("Read speed (prompt processing), mean tok/s", lambda rs: fmt(mean([r.get("read_tps") for r in rs]), 0)),
+        ("Write speed (generation), mean tok/s", lambda rs: fmt(mean([r.get("write_tps") for r in rs]))),
         ("Output tokens per case, mean", lambda rs: fmt(mean([r.get("completion_tokens") for r in rs]), 0)),
         ("of which thinking (estimate)", lambda rs: fmt(mean([r.get("reasoning_tokens_est") for r in rs]), 0)),
-        ("Prompt tokens per case, mean", lambda rs: fmt(mean([r.get("prompt_tokens") for r in rs]), 0)),
+        ("Prompt tokens per case, mean", prompt_tokens),
         ("Time per case, mean", lambda rs: fmt_s(mean([r.get("total_s") for r in rs]))),
         ("Total time", lambda rs: fmt_s(sum(r.get("total_s") or 0 for r in rs))),
     ]
@@ -569,6 +596,21 @@ def build_report(run_dir):
             row.append(fmt(mean([r["score"] for r in rs])) + " / " + fmt_s(mean([r.get("total_s") for r in rs])))
         rows.append(row)
     lines += md_table(["Case (score / time)"] + options, rows)
+
+    lines += ["", "## Read and write speed per case (tokens per second)", ""]
+    rows = []
+    for c in case_ids:
+        row = [c]
+        for o in options:
+            rs = [r for r in by_opt[o] if r["case"] == c]
+            row.append("read " + fmt(mean([r.get("read_tps") for r in rs]), 0)
+                       + " / write " + fmt(mean([r.get("write_tps") for r in rs])))
+        rows.append(row)
+    lines += md_table(["Case"] + options, rows)
+    lines.append("")
+    lines.append("Read speed is prompt tokens divided by time to first token. When consecutive cases "
+                 "share a system prompt, LM Studio reuses the cached prefix, so the first case of a "
+                 "group shows the uncached speed and later ones look faster.")
 
     if len(options) >= 2:
         q = {o: mean([r["score"] for r in by_opt[o]]) or 0.0 for o in options}
@@ -622,6 +664,10 @@ def main():
     ap.add_argument("--list-models", action="store_true")
     ap.add_argument("--report-only", action="store_true", help="only rebuild report.md of --run-dir")
     args = ap.parse_args()
+    try:
+        sys.stdout.reconfigure(line_buffering=True)  # live output even when piped to a file
+    except Exception:
+        pass
 
     with open(args.options, encoding="utf-8") as f:
         cfg = json.load(f)
@@ -649,7 +695,9 @@ def main():
                 sys.exit(f"unknown option '{n}'; options.json defines: {', '.join(options)}")
         print(f"LM Studio: {base_url}")
         print(f"Cases: {len(cases)}   Repeats: {args.repeats}   Options: {', '.join(names)}")
-        print(f"Results: {run_dir}\n")
+        print(f"Results: {run_dir}")
+        print("Per case: score 0-100, total time, read = prompt tokens/s, write = generated tokens/s, "
+              "in/out = prompt and output tokens\n")
         for n in names:
             run_option(n, options[n], cases, profile, base_url, args.repeats,
                        args.timeout, not args.no_warmup, run_dir)

@@ -8,7 +8,12 @@ between any two sets of request parameters.
 Quality is measured with deterministic checks (expected fields, value ranges,
 word counts, required phrases), not with another model, so the score is
 repeatable and runs fully offline. Speed is measured per request: time to first
-token, generation tokens per second and total time.
+token, read speed (prompt tokens processed per second), write speed (generated
+tokens per second) and total time.
+
+Results appear in the terminal as the run progresses: one line per case with
+its score, time, read and write speed and token counts, a one-line summary when
+each option finishes, and the full report at the end.
 
 Python 3.9 or newer, standard library only.
 
@@ -81,8 +86,17 @@ The second run rebuilds the report with both options side by side.
   reply was cut off.
 - **Replies cut off by max_tokens** should be 0. If the thinking option shows
   cut-offs, raise its `max_tokens`.
+- **Read speed** is prompt tokens divided by time to first token, so it is the
+  prompt-processing rate. When consecutive cases share a system prompt, LM
+  Studio reuses the cached prefix, so the first case of a group shows the
+  uncached speed and later ones look faster. Your pipeline benefits from the
+  same cache when it keeps one system prompt per step.
+- **Write speed** is generated tokens (thinking included) divided by the time
+  between the first and the last token.
 - **Prompt tokens per case** tells you the context size your real prompts
   need, which is useful for the context length you give the model at load.
+  If LM Studio does not report token usage, the count is estimated from the
+  prompt length and the report says so.
 - **of which thinking** is an estimate based on streamed chunks, not an exact
   token count.
 - **Failed checks** lists every expectation that was not met, with what the
